@@ -1,0 +1,265 @@
+#!/bin/env python3
+
+import subprocess
+import json
+import sys
+import os
+
+IDL_TO_JSON_EXECUTABLE = './idl_to_json'
+
+SPACE = "    "
+
+def getCommonSupportFunctions(filename, socketname):
+    COMMON_SUPPORT_FUNCTIONS = f"""
+// ======================================================================
+//
+//                        COMMON SUPPORT FUNCTIONS
+//
+// ======================================================================
+
+/*  getFloatFromStream 
+
+    gets a float from the stream
+    
+    args: 
+        none
+        
+    returns: 
+        float
+
+    notes: 
+        uses getStringFromStream() 
+        
+*/
+float getFloatFromStream()
+{{
+    string stringFromStream = getStringFromStream();
+    float floatFromStream = stof(stringFromStream);
+
+    return floatFromStream;
+}}
+
+/*  getIntFromStream 
+
+    gets an int from the stream
+    
+    args: 
+        none
+        
+    returns: 
+        int
+
+    notes: 
+        uses getStringFromStream() 
+        
+*/
+int getIntFromStream()
+{{
+    string stringFromStream = getStringFromStream();
+    int intFromStream = stoi(stringFromStream);
+
+    return intFromStream;
+}}
+
+//                   getStringfromStream
+//
+//   Helper routine to read a string from the stream. 
+//   Note that this code is the same for all stubs, so can be generated
+//   as boilerplate.
+//
+//   Important: this routine must leave the sock open but at EOF
+//   when eof is read from client.
+string getStringFromStream() 
+{{
+    unsigned i = 0;
+    char *bufp = (char *)malloc(INITIAL_BUFF_SIZE); // allocate memory for buffer
+    assert(bufp != NULL);
+    bool readnull;
+    ssize_t readlen;                        // amount of data read from socket
+    unsigned bufSize = INITIAL_BUFF_SIZE;
+
+    // Read a message from the stream
+    // -1 in size below is to leave room for null
+    readnull = false;
+    while(!readnull) {{
+        /* expand buffer if necessary */
+        if (i == (bufSize - 1)) {{
+            bufSize *= 2;
+            char *new_buf = (char *)realloc(bufp, bufSize);
+            assert(new_buf != NULL);
+            bufp = new_buf;
+        }}
+
+        /* read a byte into the buffer from the stream */
+        readlen = RPCSTUBSOCKET->read(bufp + i, 1);
+        
+        /* check for EOF or error */
+        if (readlen == 0) {{
+            break;
+        }}
+
+        /* check for NULL terminator */
+        if (*(bufp + i) == \'\\0\') {{
+            readnull = true;
+            break;
+        }}
+
+        /* increment i for next iteration*/
+        i++;
+    }}
+
+    
+    // With TCP streams, we should never get a 0 length read
+    // except with timeouts (which we're not setting in pingstreamserver)
+    // or EOF
+    if (readlen == 0) {{
+        c150debug->printf(C150RPCDEBUG,"{filename}: read zero length message, checking EOF");
+        if (RPCSTUBSOCKET-> eof()) {{
+            c150debug->printf(C150RPCDEBUG,"{filename}: EOF signaled on input");
+
+        }} else {{
+            throw C150Exception("{filename}: unexpected zero length read without eof");
+        }}
+    }}
+    // If we didn't get a null, input message was poorly formatted
+    else if(!readnull) 
+        throw C150Exception("{filename}: string not null terminated or too long");
+
+    
+    string buffer(bufp);
+    free(bufp);
+
+    return buffer;
+}}
+
+/* 
+                SEND TO STREAM FUNCTIONS 
+*/
+
+void sendStringToStream(string s)
+{{
+    {socketname}->write(s.c_str(), s.length()+1);
+}}
+
+void sendIntToStream(int i)
+{{
+    sendStringToStream(to_string(i));
+}}
+
+void sendFloatToStream(float f)
+{{
+    sendStringToStream(to_string(f));
+}}
+"""
+    return COMMON_SUPPORT_FUNCTIONS
+
+def __main__(): 
+    try:
+        #     Make sure invoked properly
+        assert len(sys.argv) == 2, "Wrong number of arguments"
+
+        #     Make sure IDL file exists and is readable
+        filename = sys.argv[1]
+        assert os.path.isfile(filename), f"Path {filename} does not designate a file"
+        assert os.access(filename, os.R_OK), f"File {filename} is not readable" 
+
+        #     Make sure idl_to_json exists and is executable
+        assert os.path.isfile(IDL_TO_JSON_EXECUTABLE), f"Path {IDL_TO_JSON_EXECUTABLE} does not designate a file...run \"make\" to create it" 
+        assert os.access(IDL_TO_JSON_EXECUTABLE, os.X_OK), f"File {IDL_TO_JSON_EXECUTABLE} exists but is not executable"
+
+        #     Parse declarations into a Python dictionary
+        decls = json.loads(subprocess.check_output([IDL_TO_JSON_EXECUTABLE, filename]))
+        idlName = filename.split(".")[0]
+
+        is_array = {}
+        for ty in decls['types'].items():
+            if ty[1]['type_of_type'] == "array":
+                is_array[ty[0]] = True
+            else:
+                is_array[ty[0]] = False
+
+        # decls["types"].items() -- all types
+        for ty in decls["types"].items():
+            # TY is a pair (type_name, {type_of_type, members (if stuct!!) })
+            # if ty[1]["type_of_type"] == "struct":
+            #     print(generateStructSendReceiveFuncs(ty)['get_func'])
+            #     print(generateStructSendReceiveFuncs(ty)['send_func'])
+            #     print(generateStructSendReceiveFuncs(ty)['send_decl'])
+            #     print(generateStructSendReceiveFuncs(ty)['get_decl'])
+            if ty[1]["type_of_type"] == "array":
+                print(generateArraySendReceiveFuncs(ty, is_array, decls['types'])['get_func'])
+                print(generateArraySendReceiveFuncs(ty, is_array, decls['types'])['send_func'])
+                print(generateArraySendReceiveFuncs(ty, is_array, decls['types'])['send_decl'])
+                print(generateArraySendReceiveFuncs(ty, is_array, decls['types'])['get_decl'])
+        
+        # writeCommonSupportFunctions(idlName + ".stub.cpp")
+        # writeCommonSupportFunctions(idlName + ".proxy.cpp")
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <idlfilename>", file=sys.stderr)
+
+
+def writeCommonSupportFunctions(filename):
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(getCommonSupportFunctions(filename, "RPCSTUBSOCKET"))
+
+def generateStructSendReceiveFuncs(type_pair, is_array, types):
+    type_name = type_pair[0]
+    
+    get_decl = f"{type_name} get_{type_name}_from_stream();\n"
+    send_decl = f"void send_{type_name}_to_stream({type_name} to_send);\n"
+
+    get_func = get_decl[:-2] + f"\n{{\n{SPACE + type_name} to_get;\n"
+    send_func = send_decl[:-2] + f"\n{{\n"
+    
+    for member in type_pair[1]['members']:
+        #TODO: make loop for array
+        # if types[member['name']][1]["type_of_type"] == "array":
+        #     # call special array function name (dont use the normal name) run and hide
+        get_func += SPACE + f"to_get.{member['name']} = get_{member['type']}_from_stream();\n"
+        send_func += SPACE + f"send_{member['type']}_to_stream(to_send.{member['name']});\n"
+
+    get_func += SPACE + f"return to_get;\n}}\n"
+    send_func += f"}}\n"
+
+    to_return = {
+        "get_func" : get_func, 
+        "send_func" : send_func, 
+        "get_decl" : get_decl, 
+        "send_decl" : send_decl
+    }
+    return to_return
+
+def generateArraySendReceiveFuncs(type_pair, is_array, types):
+    member_type = type_pair[1]['member_type']
+    element_count = type_pair[1]['element_count']
+    for_loop = SPACE + f"for (int i = 0; i < {element_count}; i++) {{\n"
+
+    get_decl = f"void get_{member_type}_{element_count}_from_stream({member_type} *to_get);\n"
+    send_decl = f"void send_{member_type}_{element_count}_to_stream({member_type} *to_send);\n"
+
+    get_func = get_decl[:-2] + f"\n{{\n" + for_loop
+    send_func = send_decl[:-2] + f"\n{{\n" + for_loop
+
+    if is_array[member_type]:
+        # write call to special array functions
+        get_func += SPACE + SPACE + f"get_{types[member_type]['member_type']}_{types[member_type]['element_count']}_from_stream();\n"
+        send_func += SPACE + SPACE + f"send_{types[member_type]['member_type']}_{types[member_type]['element_count']}_to_stream(to_send[i]);\n"
+    else:
+        # write call to normal functions
+        get_func += (SPACE * 2) + f"to_get[i] = get_{member_type}_from_stream();\n"
+        send_func += (SPACE * 2) + f"send_{member_type}_to_stream(to_send[i]);\n"
+
+    
+    get_func += SPACE + f"}}\n}}\n"
+    send_func += SPACE + f"}}\n}}\n"
+
+    to_return = {
+        "get_func" : get_func, 
+        "send_func" : send_func, 
+        "get_decl" : get_decl, 
+        "send_decl" : send_decl
+    }
+    return to_return
+
+__main__()
