@@ -1,55 +1,130 @@
 
+void get_string_from_stream(string *string_p);
+void get_float_from_stream(float *float_p);
+void get_int_from_stream(int *int_p);
+void send_string_to_stream(string s);
+void send_int_to_stream(int i);
+void send_float_to_stream(float f);
+void get_Person_from_stream(Person *struct_p);
+void send_Person_to_stream(Person to_send);
+void get_StructWithArrays_from_stream(StructWithArrays *struct_p);
+void send_StructWithArrays_to_stream(StructWithArrays to_send);
+void get_ThreePeople_from_stream(ThreePeople *struct_p);
+void send_ThreePeople_to_stream(ThreePeople to_send);
+void get_Person_10_from_stream(Person *arr_p);
+void send_Person_10_to_stream(Person *to_send);
+void get_rectangle_from_stream(rectangle *struct_p);
+void send_rectangle_to_stream(rectangle to_send);
+void get_Person_from_stream(Person *struct_p)
+{
+    get_string_from_stream(&(struct_p->firstname));
+    get_string_from_stream(&(struct_p->lastname));
+    get_int_from_stream(&(struct_p->age));
+}
+void send_Person_to_stream(Person to_send)
+{
+    send_string_to_stream(to_send.firstname);
+    send_string_to_stream(to_send.lastname);
+    send_int_to_stream(to_send.age);
+}
+void get_StructWithArrays_from_stream(StructWithArrays *struct_p)
+{
+    get_int_from_stream(&(struct_p->aNumber));
+    get_Person_10_from_stream(struct_p->people);
+}
+void send_StructWithArrays_to_stream(StructWithArrays to_send)
+{
+    send_int_to_stream(to_send.aNumber);
+    send_Person_10_to_stream(to_send.people);
+}
+void get_ThreePeople_from_stream(ThreePeople *struct_p)
+{
+    get_Person_from_stream(&(struct_p->p1));
+    get_Person_from_stream(&(struct_p->p2));
+    get_Person_from_stream(&(struct_p->p3));
+}
+void send_ThreePeople_to_stream(ThreePeople to_send)
+{
+    send_Person_to_stream(to_send.p1);
+    send_Person_to_stream(to_send.p2);
+    send_Person_to_stream(to_send.p3);
+}
+void get_Person_10_from_stream(Person *arr_p)
+{
+    for (int i = 0; i < 10; i++) {
+        get_Person_from_stream(arr_p + i);
+    }
+}
+void send_Person_10_to_stream(Person *to_send)
+{
+    for (int i = 0; i < 10; i++) {
+        send_Person_to_stream(to_send[i]);
+    }
+}
+void get_rectangle_from_stream(rectangle *struct_p)
+{
+    get_int_from_stream(&(struct_p->x));
+    get_int_from_stream(&(struct_p->y));
+}
+void send_rectangle_to_stream(rectangle to_send)
+{
+    send_int_to_stream(to_send.x);
+    send_int_to_stream(to_send.y);
+}
+
 // ======================================================================
 //
 //                        COMMON SUPPORT FUNCTIONS
 //
 // ======================================================================
 
-/*  getFloatFromStream 
+/*  get_float_from_stream 
 
     gets a float from the stream
     
     args: 
-        none
+        float pointer
         
     returns: 
-        float
+        void
 
     notes: 
         uses getStringFromStream() 
         
 */
-float getFloatFromStream()
+void get_float_from_stream(float *float_p)
 {
-    string stringFromStream = getStringFromStream();
-    float floatFromStream = stof(stringFromStream);
+    string to_get;
+    get_string_from_stream(&to_get);
+    float floatFromStream = stof(to_get);
 
-    return floatFromStream;
+    *float_p = floatFromStream;
 }
 
-/*  getIntFromStream 
+/*  get_int_from_stream 
 
     gets an int from the stream
     
     args: 
-        none
+        int pointer
         
     returns: 
-        int
+        n/a
 
     notes: 
         uses getStringFromStream() 
         
 */
-int getIntFromStream()
+void get_int_from_stream(int *int_p)
 {
-    string stringFromStream = getStringFromStream();
-    int intFromStream = stoi(stringFromStream);
+    string to_get;
+    get_string_from_stream(&to_get);
+    int intFromStream = stoi(to_get);
 
-    return intFromStream;
+    *int_p = intFromStream;
 }
 
-//                   getStringfromStream
+//                   get_string_from_stream
 //
 //   Helper routine to read a string from the stream. 
 //   Note that this code is the same for all stubs, so can be generated
@@ -57,7 +132,7 @@ int getIntFromStream()
 //
 //   Important: this routine must leave the sock open but at EOF
 //   when eof is read from client.
-string getStringFromStream() 
+void get_string_from_stream(string *string_p) 
 {
     unsigned i = 0;
     char *bufp = (char *)malloc(INITIAL_BUFF_SIZE); // allocate memory for buffer
@@ -101,40 +176,40 @@ string getStringFromStream()
     // except with timeouts (which we're not setting in pingstreamserver)
     // or EOF
     if (readlen == 0) {
-        c150debug->printf(C150RPCDEBUG,"structs.stub.cpp: read zero length message, checking EOF");
+        c150debug->printf(C150RPCDEBUG,"structs.idl: read zero length message, checking EOF");
         if (RPCSTUBSOCKET-> eof()) {
-            c150debug->printf(C150RPCDEBUG,"structs.stub.cpp: EOF signaled on input");
+            c150debug->printf(C150RPCDEBUG,"structs.idl: EOF signaled on input");
 
         } else {
-            throw C150Exception("structs.stub.cpp: unexpected zero length read without eof");
+            throw C150Exception("structs.idl: unexpected zero length read without eof");
         }
     }
     // If we didn't get a null, input message was poorly formatted
     else if(!readnull) 
-        throw C150Exception("structs.stub.cpp: string not null terminated or too long");
+        throw C150Exception("structs.idl: string not null terminated or too long");
 
     
     string buffer(bufp);
     free(bufp);
 
-    return buffer;
+    *string_p = buffer;
 }
 
 /* 
                 SEND TO STREAM FUNCTIONS 
 */
 
-void sendStringToStream(string s)
+void send_string_to_stream(string s)
 {
     RPCSTUBSOCKET->write(s.c_str(), s.length()+1);
 }
 
-void sendIntToStream(int i)
+void send_int_to_stream(int i)
 {
-    sendStringToStream(to_string(i));
+    send_string_to_stream(to_string(i));
 }
 
-void sendFloatToStream(float f)
+void send_float_to_steram(float f)
 {
-    sendStringToStream(to_string(f));
+    send_string_to_stream(to_string(f));
 }
