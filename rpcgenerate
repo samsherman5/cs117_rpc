@@ -10,17 +10,6 @@ IDL_TO_JSON_EXECUTABLE = './idl_to_json'
 
 SPACE = "    "
 
-COMMON_SUPPORT_DECLS = f"""
-void get_string_from_stream(string *string_p);
-void get_float_from_stream(float *float_p);
-void get_int_from_stream(int *int_p);
-void send_string_to_stream(string s);
-void send_int_to_stream(int i);
-void send_float_to_stream(float f);
-
-#define INITIAL_BUFF_SIZE 50
-"""
-
 # WILL NOT CHANGE ONCE POPULATED
 types = {}     # will be populated with decls["types"]
 functions = {} # will be populated with decls["functions"]
@@ -66,19 +55,39 @@ def __main__():
             file_funcs += funcs['get_func'] + funcs['send_func']
         # if type is array 
         if ty[1]["type_of_type"] == "array":
-            funcs = generateArraySendReceiveFuncs(ty)
+            funcs = generateArraySendReceiveFuncs(ty, is_array)
             file_decls += funcs['get_decl'] + funcs['send_decl']
             file_funcs += funcs['get_func'] + funcs['send_func']
 
     # Based on the IDL, create specific functions
+    proxy_funcs = ""
+    proxy_decls = ""
+    stub_funcs = ""
+    stub_decls = ""
     for func in decls["functions"].items():
-        func_struct = generateProxyFunc(func, filename)
-        file_decls += func_struct['decl']
-        file_funcs += func_struct['func']
+        # proxy functions and declarations
+        func_struct = generateProxyFunc(func, filename[:-4], is_array)
+        proxy_decls += func_struct['decl']
+        proxy_funcs += func_struct['func']
+        
+        # stub functions and declarations 
+        stub_struct = generateStubFunc(func, filename[:-4], is_array)
+        stub_decls += stub_struct['decl']
+        stub_funcs += stub_struct['func']
+    
+    # Add dispatch function to the stub
+    dispatch_func_struct = generateDispatchFunc(decls["functions"].items())
+    stub_decls += dispatch_func_struct['decl']
+    stub_funcs += dispatch_func_struct['func']
 
+    bad_func = getBadFunction(filename)
+
+    COMMON_SUPPORT_DECLS_PROXY = getFileHeader(filename[:-4], "proxy")
+    COMMON_SUPPORT_DECLS_STUB = getFileHeader(filename[:-4], "stub")
+    
     # Build complete stub and proxy 
-    file_stub = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCSTUBSOCKET")
-    file_proxy = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCPROXYSOCKET")
+    file_stub = COMMON_SUPPORT_DECLS_STUB + file_decls + stub_decls + bad_func + stub_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCSTUBSOCKET")
+    file_proxy = COMMON_SUPPORT_DECLS_PROXY + file_decls + proxy_decls + proxy_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCPROXYSOCKET")
                 
     writeString(idlName + ".stub.cpp", file_stub)
     writeString(idlName + ".proxy.cpp", file_proxy)
@@ -90,42 +99,127 @@ def writeString(filename, file_contents):
     with open(filename, "w", encoding="utf-8") as file:
         file.write(file_contents)
 
-def generateProxyFunc(func, filename):
+def generateDispatchFunc(funcs):
+    """
+    generateDispatchFunc
+    
+    purpose: generates the dispatch function for the stub file specific to the IDL
+    
+    args: 
+        funs:   a list of the function names
+        
+    returns: 
+        a string that holds the generated dispatch function specific to the IDL 
+    """
+    decl = f"void dispatchFunction();\n"
+    body = decl[:-2] + f"""
+{{
+    string functionName;
+    get_string_from_stream(&functionName);
+    
+    if (!RPCSTUBSOCKET->eof()) {{\n
+"""
+    # for each function in the IDL, loop through and create the correct dispatch 
+    for i, func in enumerate(funcs):
+        body += SPACE + SPACE
+        if i != 0:
+            body += "else "
+        body += f"if (functionName == \"{func[0]}\")\n"
+        body += SPACE + SPACE + SPACE + f"__{func[0]}();\n"
+    body += f"""        else
+            __badFunction((char*)functionName.c_str());
+    }}
+}}\n
+"""
+    return {
+        'func': body,
+        'decl': decl
+    }
+    
+    
+def generateStubFunc(func, filename, is_array):
+    """
+    generateStubFunc
+
+    purpose: generate the functions in the {filename}.stub.cpp file
+
+    args: 
+        func:       a list of functions
+        filename:   the name of the file
+
+    returns: 
+        body:   the body of the functions as a string
+        decl:   the declaration of the functions as a string
+    """
+    func_name = func[0]
+    return_type = func[1]['return_type']
+
+    # set up declaration and body 
+    decl = f"void __{func_name}();\n"
+    body = decl[:-2] + "{\n"
+    arg_string = ""
+
+    # loop through all of the arguments to the function and add the get_{arg}_from_stream
+    # to the body 
+    for i, arg in enumerate(func[1]['arguments']):
+        name_tuple = cleanTypeName(arg['type'], is_array)
+        body += SPACE + f"{name_tuple[0]} {arg['name'] + name_tuple[1]};\n"
+        body += SPACE + f"get_{getSanitizedTypeName(arg['type'])}_from_stream({arg['name']});\n"
+        body += SPACE + f"c150debug->printf(C150RPCDEBUG, \"{filename}.stub.cpp: invoking {func_name}\");\n"
+        arg_string += arg['name'] + f", "
+        # if it is the last argument, remove the trailing ", "
+        if i == len(func[1]['arguments']) - 1:
+            arg_string = arg_string[:-2]
+
+    # send the result to the stream
+    body += SPACE + f"{return_type} result = {func_name}({arg_string});\n\n"
+    body += SPACE + f"/* send back result */\n"
+    body += SPACE + f"c150debug->printf(C150RPCDEBUG, \"{filename}.stub.cpp: returned from {func_name} -- responding to client\");\n\n"
+    body += SPACE + f"send_{getSanitizedTypeName(return_type)}_to_stream(result);\n}}\n"
+    
+    return {
+        'func': body,
+        'decl': decl
+    }
+
+def generateProxyFunc(func, filename, is_array):
     """
     generateProxyFunc
     
     purpose: generate the functions in the {filename}.proxy.cpp file
     
     args: 
-        ty:         a list of functions
+        func:       a list of functions
         filename:   the name of the file
     
     returns: 
-        body:   the body of the function as a string
-        decl:   the declaration of the function as a string
+        body:   the body of the functions as a string
+        decl:   the declaration of the functions as a string
     """
 
     func_name = func[0]
-    print(func[1])
     return_type = func[1]['return_type']
 
     decl = f"{return_type} {func_name}("
     body = f"""
 {{
     /* send remote call */
-    c150debug->printf(C150RPCDEBUG,'{filename}.proxy.cpp: {func_name}() invoked');
+    c150debug->printf(C150RPCDEBUG,"{filename}.proxy.cpp: {func_name}() invoked");
     
     /* write argument */
     send_string_to_stream("{func[0]}");
 
-    """
-    # send the arguments to the stream 
+"""
+    # build the declaration and the body for each arguments
+    # for the declaration -> generate string of arguments in "(x, y, z...)" format
+    # for the body -> generate send_{typename}_to_stream() function calls 
     for i, arg in enumerate(func[1]['arguments']):
-        decl += f"{arg['type']} {arg['name']}, "
-        body += f"send_{getSanitizedTypeName(arg['type'])}_to_stream({arg['name']})\n\n"
+        name_tuple = cleanTypeName(arg['type'], is_array)
+        decl += f"{name_tuple[0]} {arg['name'] + name_tuple[1]}, "
+        body += SPACE + f"send_{getSanitizedTypeName(arg['type'])}_to_stream({arg['name']});\n\n"
         if i == len(func[1]['arguments']) - 1:
             decl = decl[:-2]
-    decl += f");\n\n"
+    decl += f");\n"
 
     # add debug
     body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() invocation sent, waiting for response\");\n"
@@ -138,7 +232,7 @@ def generateProxyFunc(func, filename):
     body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() successful return from remote call\");\n"
     
     # return statement and closing parenthesis 
-    body += SPACE + f"return result_value;\n"
+    body += SPACE + f"return return_value;\n"
     body += f"}}\n"
 
     # put the body together, like frankenstein!
@@ -148,6 +242,27 @@ def generateProxyFunc(func, filename):
         'func': body,
         'decl': decl
     }
+
+
+def cleanTypeName(type_name, is_array):
+    """
+    cleanTypeName
+    
+    purpose: if the type name is an array, it removes the first two "__" 
+             from the type name for further use
+             
+    args: 
+        type_name:  the name of the type as a string
+        is_array:   a dict of type names that tell if a type is an array
+        
+    returns: 
+        a string, cleaned up if an array, if not just whatever was passed in
+    """
+    if (is_array[type_name]):
+        partition = type_name[2:].split("[", 1)
+        return (partition[0], "[" + partition[1])
+    else:
+        return (type_name, "")
 
 def getSanitizedTypeName(type_name):
     """
@@ -226,7 +341,7 @@ def generateStructSendReceiveFuncs(type_pair, is_array):
     }
     return to_return
 
-def generateArraySendReceiveFuncs(type_pair):
+def generateArraySendReceiveFuncs(type_pair, is_array):
     member_type = type_pair[1]['member_type']
     element_count = type_pair[1]['element_count'] # number of elements in the array 
     for_loop = SPACE + f"for (int i = 0; i < {element_count}; i++) {{\n"
@@ -237,8 +352,9 @@ def generateArraySendReceiveFuncs(type_pair):
     sanitized_type = getSanitizedTypeName(type_pair[0])
     
     ### Generate send and receive declarations
-    get_decl = f"void get_{sanitized_type}_from_stream({base_type} {'*'* (num_nests)}arr_p);\n"
-    send_decl = f"void send_{sanitized_type}_to_stream({base_type} {'*' * num_nests}to_send);\n"
+    name_tuple = cleanTypeName(type_pair[0], is_array)
+    get_decl = f"void get_{sanitized_type}_from_stream({name_tuple[0]} arr_p{name_tuple[1]});\n"
+    send_decl = f"void send_{sanitized_type}_to_stream({name_tuple[0]} to_send{name_tuple[1]});\n"
 
     ### Generate send and receive functions
 
@@ -248,7 +364,10 @@ def generateArraySendReceiveFuncs(type_pair):
 
     # build body of for loop
     sanitized_member_type = getSanitizedTypeName(member_type)
-    get_func += SPACE + SPACE + f"get_{sanitized_member_type}_from_stream(arr_p + i);\n"
+    if num_nests > 1:
+        get_func += SPACE + SPACE + f"get_{sanitized_member_type}_from_stream(arr_p[i]);\n"
+    else:
+        get_func += SPACE + SPACE + f"get_{sanitized_member_type}_from_stream(arr_p + i);\n"
     send_func += SPACE + SPACE + f"send_{sanitized_member_type}_to_stream(to_send[i]);\n"
 
     get_func += SPACE + f"}}\n}}\n"
@@ -261,6 +380,43 @@ def generateArraySendReceiveFuncs(type_pair):
         "send_decl" : send_decl
     }
     return to_return
+
+def getFileHeader(filename, file_type):
+    COMMON_SUPPORT_DECLS = f"""
+#include <string>
+#include "rpc{file_type}helper.h"
+
+#include <cstdio>
+#include <cstring>
+#include "c150debug.h"
+#include <cassert>
+
+using namespace std;
+using namespace C150NETWORK;
+#include "{filename}.idl"
+
+void get_string_from_stream(string *string_p);
+void get_float_from_stream(float *float_p);
+void get_int_from_stream(int *int_p);
+void send_string_to_stream(string s);
+void send_int_to_stream(int i);
+void send_float_to_stream(float f);
+
+#define INITIAL_BUFF_SIZE 50
+"""
+
+    return COMMON_SUPPORT_DECLS
+
+def getBadFunction(filename):
+    return f"""void __badFunction(char *functionName) {{
+    char doneBuffer[5] = "BAD";  // to write magic value DONE + null
+
+    // Send the response to the client indicating bad function
+
+    c150debug->printf(C150RPCDEBUG,"{filename}.stub.cpp: received call for nonexistent function %s()",functionName);
+    RPCSTUBSOCKET->write(doneBuffer, strlen(doneBuffer)+1);
+}}
+"""
 
 def getCommonSupportFunctions(filename, socketname):
     """
@@ -407,7 +563,7 @@ void send_int_to_stream(int i)
     send_string_to_stream(to_string(i));
 }}
 
-void send_float_to_steram(float f)
+void send_float_to_stream(float f)
 {{
     send_string_to_stream(to_string(f));
 }}

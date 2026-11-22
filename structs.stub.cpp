@@ -1,4 +1,16 @@
 
+#include <string>
+#include "rpcstubhelper.h"
+
+#include <cstdio>
+#include <cstring>
+#include "c150debug.h"
+#include <cassert>
+
+using namespace std;
+using namespace C150NETWORK;
+#include "structs.idl"
+
 void get_string_from_stream(string *string_p);
 void get_float_from_stream(float *float_p);
 void get_int_from_stream(int *int_p);
@@ -17,9 +29,69 @@ void get_Person_10_from_stream(Person *arr_p);
 void send_Person_10_to_stream(Person *to_send);
 void get_rectangle_from_stream(rectangle *struct_p);
 void send_rectangle_to_stream(rectangle to_send);
-int ageSum(StructWithArrays swa);
-int area(rectangle r);
-Person findPerson(ThreePeople tp);
+void __ageSum();
+void __area();
+void __findPerson();
+void dispatchFunction();
+void __badFunction(char *functionName) {
+    char doneBuffer[5] = "BAD";  // to write magic value DONE + null
+
+    // Send the response to the client indicating bad function
+
+    c150debug->printf(C150RPCDEBUG,"structs.idl.stub.cpp: received call for nonexistent function %s()",functionName);
+    RPCSTUBSOCKET->write(doneBuffer, strlen(doneBuffer)+1);
+}
+void __ageSum(){
+    StructWithArrays swa;
+    get_StructWithArrays_from_stream(&swa);
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: invoking ageSum");
+    int result = ageSum(swa);
+
+    /* send back result */
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: returned from ageSum -- responding to client");
+
+    send_int_to_stream(result);
+}
+void __area(){
+    rectangle r;
+    get_rectangle_from_stream(&r);
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: invoking area");
+    int result = area(r);
+
+    /* send back result */
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: returned from area -- responding to client");
+
+    send_int_to_stream(result);
+}
+void __findPerson(){
+    ThreePeople tp;
+    get_ThreePeople_from_stream(&tp);
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: invoking findPerson");
+    Person result = findPerson(tp);
+
+    /* send back result */
+    c150debug->printf(C150RPCDEBUG, "structs.stub.cpp: returned from findPerson -- responding to client");
+
+    send_Person_to_stream(result);
+}
+void dispatchFunction()
+{
+    string functionName;
+    get_string_from_stream(&functionName);
+    
+    if (!RPCSTUBSOCKET->eof()) {
+
+        if (functionName == "ageSum")
+            __ageSum();
+        else if (functionName == "area")
+            __area();
+        else if (functionName == "findPerson")
+            __findPerson();
+        else
+            __badFunction((char*)functionName.c_str());
+    }
+}
+
 void get_Person_from_stream(Person *struct_p)
 {
     get_string_from_stream(&(struct_p->firstname));
@@ -75,51 +147,6 @@ void send_rectangle_to_stream(rectangle to_send)
 {
     send_int_to_stream(to_send.x);
     send_int_to_stream(to_send.y);
-}
-int ageSum(StructWithArrays swa)
-{
-    /* send remote call */
-    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: ageSum() invoked');
-    
-    /* write argument */
-    send_string_to_stream("ageSum");
-
-        send_StructWithArrays_to_stream(swa)
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: ageSum() invocation sent, waiting for response");
-    int return_value
-    get_int_from_stream(&return_value);
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: ageSum() successful return from remote call");
-    return result_value;
-}
-int area(rectangle r)
-{
-    /* send remote call */
-    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: area() invoked');
-    
-    /* write argument */
-    send_string_to_stream("area");
-
-        send_rectangle_to_stream(r)
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: area() invocation sent, waiting for response");
-    int return_value
-    get_int_from_stream(&return_value);
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: area() successful return from remote call");
-    return result_value;
-}
-Person findPerson(ThreePeople tp)
-{
-    /* send remote call */
-    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: findPerson() invoked');
-    
-    /* write argument */
-    send_string_to_stream("findPerson");
-
-        send_ThreePeople_to_stream(tp)
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: findPerson() invocation sent, waiting for response");
-    Person return_value
-    get_Person_from_stream(&return_value);
-    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: findPerson() successful return from remote call");
-    return result_value;
 }
 
 // ======================================================================
@@ -226,17 +253,17 @@ void get_string_from_stream(string *string_p)
     // except with timeouts (which we're not setting in pingstreamserver)
     // or EOF
     if (readlen == 0) {
-        c150debug->printf(C150RPCDEBUG,"structs.idl: read zero length message, checking EOF");
+        c150debug->printf(C150RPCDEBUG,"structs: read zero length message, checking EOF");
         if (RPCSTUBSOCKET-> eof()) {
-            c150debug->printf(C150RPCDEBUG,"structs.idl: EOF signaled on input");
+            c150debug->printf(C150RPCDEBUG,"structs: EOF signaled on input");
 
         } else {
-            throw C150Exception("structs.idl: unexpected zero length read without eof");
+            throw C150Exception("structs: unexpected zero length read without eof");
         }
     }
     // If we didn't get a null, input message was poorly formatted
     else if(!readnull) 
-        throw C150Exception("structs.idl: string not null terminated or too long");
+        throw C150Exception("structs: string not null terminated or too long");
 
     
     string buffer(bufp);
