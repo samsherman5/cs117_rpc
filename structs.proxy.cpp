@@ -5,6 +5,8 @@ void get_int_from_stream(int *int_p);
 void send_string_to_stream(string s);
 void send_int_to_stream(int i);
 void send_float_to_stream(float f);
+
+#define INITIAL_BUFF_SIZE 50
 void get_Person_from_stream(Person *struct_p);
 void send_Person_to_stream(Person to_send);
 void get_StructWithArrays_from_stream(StructWithArrays *struct_p);
@@ -15,6 +17,9 @@ void get_Person_10_from_stream(Person *arr_p);
 void send_Person_10_to_stream(Person *to_send);
 void get_rectangle_from_stream(rectangle *struct_p);
 void send_rectangle_to_stream(rectangle to_send);
+int ageSum(StructWithArrays swa);
+int area(rectangle r);
+Person findPerson(ThreePeople tp);
 void get_Person_from_stream(Person *struct_p)
 {
     get_string_from_stream(&(struct_p->firstname));
@@ -70,6 +75,54 @@ void send_rectangle_to_stream(rectangle to_send)
 {
     send_int_to_stream(to_send.x);
     send_int_to_stream(to_send.y);
+}
+int ageSum(StructWithArrays swa)
+{
+    /* send remote call */
+    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: ageSum() invoked');
+    
+    /* write argument */
+    send_string_to_stream("ageSum");
+
+    send_StructWithArrays_to_stream(swa)
+
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: ageSum() invocation sent, waiting for response");
+    int return_value;
+    get_int_from_stream(&return_value);
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: ageSum() successful return from remote call");
+    return result_value;
+}
+int area(rectangle r)
+{
+    /* send remote call */
+    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: area() invoked');
+    
+    /* write argument */
+    send_string_to_stream("area");
+
+    send_rectangle_to_stream(r)
+
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: area() invocation sent, waiting for response");
+    int return_value;
+    get_int_from_stream(&return_value);
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: area() successful return from remote call");
+    return result_value;
+}
+Person findPerson(ThreePeople tp)
+{
+    /* send remote call */
+    c150debug->printf(C150RPCDEBUG,'structs.idl.proxy.cpp: findPerson() invoked');
+    
+    /* write argument */
+    send_string_to_stream("findPerson");
+
+    send_ThreePeople_to_stream(tp)
+
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: findPerson() invocation sent, waiting for response");
+    Person return_value;
+    get_Person_from_stream(&return_value);
+    c150debug->printf(C150RPCDEBUG,"structs.idl.proxy.cpp: findPerson() successful return from remote call");
+    return result_value;
 }
 
 // ======================================================================

@@ -17,10 +17,257 @@ void get_int_from_stream(int *int_p);
 void send_string_to_stream(string s);
 void send_int_to_stream(int i);
 void send_float_to_stream(float f);
+
 #define INITIAL_BUFF_SIZE 50
 """
 
+# WILL NOT CHANGE ONCE POPULATED
+types = {}     # will be populated with decls["types"]
+functions = {} # will be populated with decls["functions"]
+
+def __main__(): 
+    # try:
+    #     Make sure invoked properly
+    assert len(sys.argv) == 2, "Wrong number of arguments"
+
+    #     Make sure IDL file exists and is readable
+    filename = sys.argv[1]
+    assert os.path.isfile(filename), f"Path {filename} does not designate a file"
+    assert os.access(filename, os.R_OK), f"File {filename} is not readable" 
+
+    #     Make sure idl_to_json exists and is executable
+    assert os.path.isfile(IDL_TO_JSON_EXECUTABLE), f"Path {IDL_TO_JSON_EXECUTABLE} does not designate a file...run \"make\" to create it" 
+    assert os.access(IDL_TO_JSON_EXECUTABLE, os.X_OK), f"File {IDL_TO_JSON_EXECUTABLE} exists but is not executable"
+
+    #     Parse declarations into a Python dictionary
+    decls = json.loads(subprocess.check_output([IDL_TO_JSON_EXECUTABLE, filename]))
+    global types
+    types = decls['types']
+    global functions
+    functions = decls['functions']
+
+    idlName = filename.split(".")[0]
+
+    is_array = {}
+    for ty in decls['types'].items():
+        if ty[1]['type_of_type'] == "array":
+            is_array[ty[0]] = True
+        else:
+            is_array[ty[0]] = False
+
+    # Based on the IDL, create specific get_x_from_stream and send_x_to_stream functions and declarations
+    file_decls = ""
+    file_funcs = ""
+    for ty in decls["types"].items():
+        # if type is struct
+        if ty[1]["type_of_type"] == "struct":
+            funcs = generateStructSendReceiveFuncs(ty, is_array)
+            file_decls += funcs['get_decl'] + funcs['send_decl']
+            file_funcs += funcs['get_func'] + funcs['send_func']
+        # if type is array 
+        if ty[1]["type_of_type"] == "array":
+            funcs = generateArraySendReceiveFuncs(ty)
+            file_decls += funcs['get_decl'] + funcs['send_decl']
+            file_funcs += funcs['get_func'] + funcs['send_func']
+
+    # Based on the IDL, create specific functions
+    for func in decls["functions"].items():
+        func_struct = generateProxyFunc(func, filename)
+        file_decls += func_struct['decl']
+        file_funcs += func_struct['func']
+
+    # Build complete stub and proxy 
+    file_stub = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCSTUBSOCKET")
+    file_proxy = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCPROXYSOCKET")
+                
+    writeString(idlName + ".stub.cpp", file_stub)
+    writeString(idlName + ".proxy.cpp", file_proxy)
+    # except Exception as e:
+    #     print(str(e), file=sys.stderr)
+    #     print(f"Usage: {sys.argv[0]} <idlfilename>", file=sys.stderr)
+
+def writeString(filename, file_contents):
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(file_contents)
+
+def generateProxyFunc(func, filename):
+    """
+    generateProxyFunc
+    
+    purpose: generate the functions in the {filename}.proxy.cpp file
+    
+    args: 
+        ty:         a list of functions
+        filename:   the name of the file
+    
+    returns: 
+        body:   the body of the function as a string
+        decl:   the declaration of the function as a string
+    """
+
+    func_name = func[0]
+    print(func[1])
+    return_type = func[1]['return_type']
+
+    decl = f"{return_type} {func_name}("
+    body = f"""
+{{
+    /* send remote call */
+    c150debug->printf(C150RPCDEBUG,'{filename}.proxy.cpp: {func_name}() invoked');
+    
+    /* write argument */
+    send_string_to_stream("{func[0]}");
+
+    """
+    # send the arguments to the stream 
+    for i, arg in enumerate(func[1]['arguments']):
+        decl += f"{arg['type']} {arg['name']}, "
+        body += f"send_{getSanitizedTypeName(arg['type'])}_to_stream({arg['name']})\n\n"
+        if i == len(func[1]['arguments']) - 1:
+            decl = decl[:-2]
+    decl += f");\n\n"
+
+    # add debug
+    body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() invocation sent, waiting for response\");\n"
+
+    # get the return value from the stream
+    body += SPACE + f"{func[1]['return_type']} return_value;\n"
+    body += SPACE + f"get_{getSanitizedTypeName(return_type)}_from_stream(&return_value);\n"
+
+    # add debug 
+    body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() successful return from remote call\");\n"
+    
+    # return statement and closing parenthesis 
+    body += SPACE + f"return result_value;\n"
+    body += f"}}\n"
+
+    # put the body together, like frankenstein!
+    body = decl[:-2] + body
+
+    return {
+        'func': body,
+        'decl': decl
+    }
+
+def getSanitizedTypeName(type_name):
+    """
+    getSanitizedTypeName
+
+    purpose: gets the type name of a type in the sanitized format: 
+        ex. int -> int
+        ex. __int[10] -> int_10
+        ex. __rectangle[40][15] -> rectangle_40_15
+
+    arguments: 
+        type_name:   the name of the type
+
+    returns: 
+        a string, the sanitized type name
+    """
+    type_of_type = types[type_name]['type_of_type']
+
+    # if the type is an array, build the type name from the size of the inner arrays
+    if type_of_type == "array":
+        sanitized_name = re.findall(r"__([a-zA-Z0-9]+)", type_name)[0]
+        sizes = re.findall(r"\[(\d+)\]", type_name)
+        for size in sizes: 
+            sanitized_name += f"_{size}"
+    # otherwise, just return the type name 
+    else:
+        sanitized_name = type_name
+
+    return sanitized_name
+    
+
+def generateStructSendReceiveFuncs(type_pair, is_array):
+    """
+    generateStructSendReceiveFuncs
+    
+    purpose: generates the declaration and implementation functions for
+             sending and receiving types from the stream 
+             
+    args: 
+        type_pair:  the name of the type and the type of type
+        is_array:   a boolean array that signifies if a type is an array 
+        
+    returns: 
+        get_func:   the function implementation of getting a type from stream
+        send_func:  the function implementation of sending a type to stream 
+        get_decl:   the declaration of the function that gets a type from stream
+        send_decl:  the declaration of the function that sends a type to stream
+    """
+    type_name = type_pair[0]
+    
+    get_decl = f"void get_{type_name}_from_stream({type_name} *struct_p);\n"
+    send_decl = f"void send_{type_name}_to_stream({type_name} to_send);\n"
+
+    get_func = get_decl[:-2] + f"\n{{\n"
+    send_func = send_decl[:-2] + f"\n{{\n"
+    
+    for member in type_pair[1]['members']:
+        sanitized_type = getSanitizedTypeName(member['type'])
+        # If array, make sure all nested arrays are accounted for
+        if is_array[member['type']]:
+            get_func += SPACE + f"get_{sanitized_type}_from_stream(struct_p->{member['name']});\n"
+            send_func += SPACE + f"send_{sanitized_type}_to_stream(to_send.{member['name']});\n"
+        # Otherwise, create normal call 
+        else:
+            get_func += SPACE + f"get_{sanitized_type}_from_stream(&(struct_p->{member['name']}));\n"
+            send_func += SPACE + f"send_{sanitized_type}_to_stream(to_send.{member['name']});\n"
+
+    get_func += f"}}\n"
+    send_func += f"}}\n"
+
+    to_return = {
+        "get_func" : get_func, 
+        "send_func" : send_func, 
+        "get_decl" : get_decl, 
+        "send_decl" : send_decl
+    }
+    return to_return
+
+def generateArraySendReceiveFuncs(type_pair):
+    member_type = type_pair[1]['member_type']
+    element_count = type_pair[1]['element_count'] # number of elements in the array 
+    for_loop = SPACE + f"for (int i = 0; i < {element_count}; i++) {{\n"
+    base_type = re.findall(r"__([a-zA-Z0-9]+)", type_pair[0])[0] # base type of the array 
+    sizes = re.findall(r"\[(\d+)\]", type_pair[0])
+    num_nests = type_pair[0].count("[") # number of times to pass by reference 
+
+    sanitized_type = getSanitizedTypeName(type_pair[0])
+    
+    ### Generate send and receive declarations
+    get_decl = f"void get_{sanitized_type}_from_stream({base_type} {'*'* (num_nests)}arr_p);\n"
+    send_decl = f"void send_{sanitized_type}_to_stream({base_type} {'*' * num_nests}to_send);\n"
+
+    ### Generate send and receive functions
+
+    # steal definition signature from declaration
+    get_func = get_decl[:-2] + f"\n{{\n" + for_loop
+    send_func = send_decl[:-2] + f"\n{{\n" + for_loop
+
+    # build body of for loop
+    sanitized_member_type = getSanitizedTypeName(member_type)
+    get_func += SPACE + SPACE + f"get_{sanitized_member_type}_from_stream(arr_p + i);\n"
+    send_func += SPACE + SPACE + f"send_{sanitized_member_type}_to_stream(to_send[i]);\n"
+
+    get_func += SPACE + f"}}\n}}\n"
+    send_func += SPACE + f"}}\n}}\n"
+
+    to_return = {
+        "get_func" : get_func, 
+        "send_func" : send_func, 
+        "get_decl" : get_decl, 
+        "send_decl" : send_decl
+    }
+    return to_return
+
 def getCommonSupportFunctions(filename, socketname):
+    """
+    getCommonSupportFunctions
+    
+    purpose: generates the string that holds the common support func
+    """
     
     COMMON_SUPPORT_FUNCTIONS = f"""
 // ======================================================================
@@ -166,149 +413,5 @@ void send_float_to_steram(float f)
 }}
 """
     return COMMON_SUPPORT_FUNCTIONS
-
-def __main__(): 
-    try:
-        #     Make sure invoked properly
-        assert len(sys.argv) == 2, "Wrong number of arguments"
-
-        #     Make sure IDL file exists and is readable
-        filename = sys.argv[1]
-        assert os.path.isfile(filename), f"Path {filename} does not designate a file"
-        assert os.access(filename, os.R_OK), f"File {filename} is not readable" 
-
-        #     Make sure idl_to_json exists and is executable
-        assert os.path.isfile(IDL_TO_JSON_EXECUTABLE), f"Path {IDL_TO_JSON_EXECUTABLE} does not designate a file...run \"make\" to create it" 
-        assert os.access(IDL_TO_JSON_EXECUTABLE, os.X_OK), f"File {IDL_TO_JSON_EXECUTABLE} exists but is not executable"
-
-        #     Parse declarations into a Python dictionary
-        decls = json.loads(subprocess.check_output([IDL_TO_JSON_EXECUTABLE, filename]))
-        idlName = filename.split(".")[0]
-
-        is_array = {}
-        for ty in decls['types'].items():
-            if ty[1]['type_of_type'] == "array":
-                is_array[ty[0]] = True
-            else:
-                is_array[ty[0]] = False
-
-        # Based on the IDL, create specific get_x_from_stream and send_x_to_stream functions and declarations
-        file_decls = ""
-        file_funcs = ""
-        for ty in decls["types"].items():
-            # if type is struct
-            if ty[1]["type_of_type"] == "struct":
-                funcs = generateStructSendReceiveFuncs(ty, is_array)
-                file_decls += funcs['get_decl'] + funcs['send_decl']
-                file_funcs += funcs['get_func'] + funcs['send_func']
-            # if type is array 
-            if ty[1]["type_of_type"] == "array":
-                funcs = generateArraySendReceiveFuncs(ty)
-                file_decls += funcs['get_decl'] + funcs['send_decl']
-                file_funcs += funcs['get_func'] + funcs['send_func']
-
-        # Build complete stub and proxy 
-        file_stub = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCSTUBSOCKET")
-        file_proxy = COMMON_SUPPORT_DECLS + file_decls + file_funcs + getCommonSupportFunctions(filename, "RPCPROXYSOCKET")
-                    
-        writeString(idlName + ".stub.cpp", file_stub)
-        writeString(idlName + ".proxy.cpp", file_proxy)
-    except Exception as e:
-        print(str(e), file=sys.stderr)
-        print(f"Usage: {sys.argv[0]} <idlfilename>", file=sys.stderr)
-
-def writeString(filename, file_contents):
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(file_contents)
-
-def writeCommonSupportFunctions(filename):
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(getCommonSupportFunctions(filename, "RPCSTUBSOCKET"))
-
-def generateStructSendReceiveFuncs(type_pair, is_array):
-    type_name = type_pair[0]
-    
-    get_decl = f"void get_{type_name}_from_stream({type_name} *struct_p);\n"
-    send_decl = f"void send_{type_name}_to_stream({type_name} to_send);\n"
-
-    get_func = get_decl[:-2] + f"\n{{\n"
-    send_func = send_decl[:-2] + f"\n{{\n"
-    
-    for member in type_pair[1]['members']:
-        
-        # If array, make sure all nested arrays are accounted for
-        if is_array[member['type']]:
-            base_type = re.findall(r"__([a-zA-Z0-9]+)", member['type'])[0]
-            sizes = re.findall(r"\[(\d+)\]", member['type'])
-            get_func += SPACE + f"get_{base_type}"
-            send_func += SPACE + f"send_{base_type}"
-            for size in sizes: 
-                get_func += f"_{size}"
-                send_func += f"_{size}"
-
-            get_func += f"_from_stream(struct_p->{member['name']});\n"
-            send_func += f"_to_stream(to_send.{member['name']});\n"
-        # Otherwise, create normal call 
-        else: 
-            get_func += SPACE + f"get_{member['type']}_from_stream(&(struct_p->{member['name']}));\n"
-            send_func += SPACE + f"send_{member['type']}_to_stream(to_send.{member['name']});\n"
-
-    get_func += f"}}\n"
-    send_func += f"}}\n"
-
-    to_return = {
-        "get_func" : get_func, 
-        "send_func" : send_func, 
-        "get_decl" : get_decl, 
-        "send_decl" : send_decl
-    }
-    return to_return
-
-def generateArraySendReceiveFuncs(type_pair):
-    member_type = type_pair[1]['member_type']
-    element_count = type_pair[1]['element_count'] # number of elements in the array 
-    for_loop = SPACE + f"for (int i = 0; i < {element_count}; i++) {{\n"
-    base_type = re.findall(r"__([a-zA-Z0-9]+)", type_pair[0])[0] # base type of the array 
-    sizes = re.findall(r"\[(\d+)\]", type_pair[0])
-    num_nests = type_pair[0].count("[") # number of times to pass by reference 
-
-
-    ### Generate send and receive declarations
-    get_decl = f"void get_{base_type}"
-    send_decl = f"void send_{base_type}"
-
-    for size in sizes: 
-        get_decl += f"_{size}"
-        send_decl += f"_{size}"
-
-    get_decl += f"_from_stream({base_type} {'*'* (num_nests)}arr_p);\n"
-    send_decl += f"_to_stream({base_type} {'*' * num_nests}to_send);\n"
-
-    ### Generate send and receive functions
-
-    # steal definition signature from declaration
-    get_func = get_decl[:-2] + f"\n{{\n" + for_loop
-    send_func = send_decl[:-2] + f"\n{{\n" + for_loop
-
-    # build body of for loop
-    member_sizes = sizes[1:]
-    get_func += SPACE + SPACE + f"get_{base_type}"
-    send_func += SPACE + SPACE + f"send_{base_type}"
-    for member_size in member_sizes:
-        get_func += f"_{member_size}"
-        send_func += f"_{member_size}"
-    get_func += "_from_stream(arr_p + i);\n"
-    send_func += f"_to_stream(to_send[i]);\n"
-
-    get_func += SPACE + f"}}\n}}\n"
-    send_func += SPACE + f"}}\n}}\n"
-
-    to_return = {
-        "get_func" : get_func, 
-        "send_func" : send_func, 
-        "get_decl" : get_decl, 
-        "send_decl" : send_decl
-    }
-    return to_return
 
 __main__()
