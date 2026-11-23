@@ -36,14 +36,14 @@ void __badFunction(char *functionName) {
     RPCSTUBSOCKET->write(doneBuffer, strlen(doneBuffer)+1);
 }
 void __sqrt(){
-    ('int', '[24]') x;
-    get_int_24_from_stream(&x);
+    int x[24];
+    get_int_24_from_stream(x);
     c150debug->printf(C150RPCDEBUG, "testarray2.stub.cpp: invoking sqrt");
-    ('int', '[24][15]') y;
-    get_int_24_15_from_stream(&y);
+    int y[24][15];
+    get_int_24_15_from_stream(y);
     c150debug->printf(C150RPCDEBUG, "testarray2.stub.cpp: invoking sqrt");
-    ('int', '[24][15]') z;
-    get_int_24_15_from_stream(&z);
+    int z[24][15];
+    get_int_24_15_from_stream(z);
     c150debug->printf(C150RPCDEBUG, "testarray2.stub.cpp: invoking sqrt");
     int result = sqrt(x, y, z);
 

@@ -6,6 +6,7 @@
 #include <cstring>
 #include "c150debug.h"
 #include <cassert>
+#include "c150grading.h"
 
 using namespace std;
 using namespace C150NETWORK;
@@ -25,8 +26,8 @@ void get_StructWithArrays_from_stream(StructWithArrays *struct_p);
 void send_StructWithArrays_to_stream(StructWithArrays to_send);
 void get_ThreePeople_from_stream(ThreePeople *struct_p);
 void send_ThreePeople_to_stream(ThreePeople to_send);
-void get_Person_10_from_stream(Person *arr_p);
-void send_Person_10_to_stream(Person *to_send);
+void get_Person_10_from_stream(Person arr_p[10]);
+void send_Person_10_to_stream(Person to_send[10]);
 void get_rectangle_from_stream(rectangle *struct_p);
 void send_rectangle_to_stream(rectangle to_send);
 void __ageSum();
@@ -80,7 +81,7 @@ void dispatchFunction()
     get_string_from_stream(&functionName);
     
     if (!RPCSTUBSOCKET->eof()) {
-
+        *GRADING << functionName << "() invoked by client" << endl;
         if (functionName == "ageSum")
             __ageSum();
         else if (functionName == "area")
@@ -126,13 +127,13 @@ void send_ThreePeople_to_stream(ThreePeople to_send)
     send_Person_to_stream(to_send.p2);
     send_Person_to_stream(to_send.p3);
 }
-void get_Person_10_from_stream(Person *arr_p)
+void get_Person_10_from_stream(Person arr_p[10])
 {
     for (int i = 0; i < 10; i++) {
         get_Person_from_stream(arr_p + i);
     }
 }
-void send_Person_10_to_stream(Person *to_send)
+void send_Person_10_to_stream(Person to_send[10])
 {
     for (int i = 0; i < 10; i++) {
         send_Person_to_stream(to_send[i]);
@@ -286,7 +287,7 @@ void send_int_to_stream(int i)
     send_string_to_stream(to_string(i));
 }
 
-void send_float_to_steram(float f)
+void send_float_to_stream(float f)
 {
     send_string_to_stream(to_string(f));
 }

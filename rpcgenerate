@@ -15,35 +15,75 @@ types = {}     # will be populated with decls["types"]
 functions = {} # will be populated with decls["functions"]
 
 def __main__(): 
-    # try:
-    #     Make sure invoked properly
-    assert len(sys.argv) == 2, "Wrong number of arguments"
+    try:
+        #     Make sure invoked properly
+        assert len(sys.argv) == 2, "Wrong number of arguments"
 
-    #     Make sure IDL file exists and is readable
-    filename = sys.argv[1]
-    assert os.path.isfile(filename), f"Path {filename} does not designate a file"
-    assert os.access(filename, os.R_OK), f"File {filename} is not readable" 
+        #     Make sure IDL file exists and is readable
+        filename = sys.argv[1]
+        assert os.path.isfile(filename), f"Path {filename} does not designate a file"
+        assert os.access(filename, os.R_OK), f"File {filename} is not readable" 
 
-    #     Make sure idl_to_json exists and is executable
-    assert os.path.isfile(IDL_TO_JSON_EXECUTABLE), f"Path {IDL_TO_JSON_EXECUTABLE} does not designate a file...run \"make\" to create it" 
-    assert os.access(IDL_TO_JSON_EXECUTABLE, os.X_OK), f"File {IDL_TO_JSON_EXECUTABLE} exists but is not executable"
+        #     Make sure idl_to_json exists and is executable
+        assert os.path.isfile(IDL_TO_JSON_EXECUTABLE), f"Path {IDL_TO_JSON_EXECUTABLE} does not designate a file...run \"make\" to create it" 
+        assert os.access(IDL_TO_JSON_EXECUTABLE, os.X_OK), f"File {IDL_TO_JSON_EXECUTABLE} exists but is not executable"
 
-    #     Parse declarations into a Python dictionary
-    decls = json.loads(subprocess.check_output([IDL_TO_JSON_EXECUTABLE, filename]))
-    global types
-    types = decls['types']
-    global functions
-    functions = decls['functions']
+        #     Parse declarations into a Python dictionary
+        decls = json.loads(subprocess.check_output([IDL_TO_JSON_EXECUTABLE, filename]))
+        global types
+        types = decls['types']
+        global functions
+        functions = decls['functions']
 
-    idlName = filename.split(".")[0]
+        idlName = filename.split(".")[0]
 
-    is_array = {}
-    for ty in decls['types'].items():
-        if ty[1]['type_of_type'] == "array":
-            is_array[ty[0]] = True
-        else:
-            is_array[ty[0]] = False
+        is_array = {}
+        for ty in decls['types'].items():
+            if ty[1]['type_of_type'] == "array":
+                is_array[ty[0]] = True
+            else:
+                is_array[ty[0]] = False
 
+        # Based on the IDL, create specific get_x_from_stream and send_x_to_stream functions and declarations
+        file_decls, file_funcs = generateStreamFuncs(decls, is_array)
+
+        # Based on the IDL, create specific functions
+        proxy_funcs = ""
+        proxy_decls = ""
+        stub_funcs = ""
+        stub_decls = ""
+        for func in decls["functions"].items():
+            # proxy functions and declarations
+            func_struct = generateProxyFunc(func, filename[:-4], is_array)
+            proxy_decls += func_struct['decl']
+            proxy_funcs += func_struct['func']
+            
+            # stub functions and declarations 
+            stub_struct = generateStubFunc(func, filename[:-4], is_array)
+            stub_decls += stub_struct['decl']
+            stub_funcs += stub_struct['func']
+        
+        # Add dispatch function to the stub
+        dispatch_func_struct = generateDispatchFunc(decls["functions"].items())
+        stub_decls += dispatch_func_struct['decl']
+        stub_funcs += dispatch_func_struct['func']
+
+        bad_func = getBadFunction(filename)
+
+        COMMON_SUPPORT_DECLS_PROXY = getFileHeader(filename[:-4], "proxy")
+        COMMON_SUPPORT_DECLS_STUB = getFileHeader(filename[:-4], "stub")
+        
+        # Build complete stub and proxy 
+        file_stub = COMMON_SUPPORT_DECLS_STUB + file_decls + stub_decls + bad_func + stub_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCSTUBSOCKET")
+        file_proxy = COMMON_SUPPORT_DECLS_PROXY + file_decls + proxy_decls + proxy_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCPROXYSOCKET")
+                    
+        writeString(idlName + ".stub.cpp", file_stub)
+        writeString(idlName + ".proxy.cpp", file_proxy)
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <idlfilename>", file=sys.stderr)
+
+def generateStreamFuncs(decls, is_array):
     # Based on the IDL, create specific get_x_from_stream and send_x_to_stream functions and declarations
     file_decls = ""
     file_funcs = ""
@@ -58,42 +98,7 @@ def __main__():
             funcs = generateArraySendReceiveFuncs(ty, is_array)
             file_decls += funcs['get_decl'] + funcs['send_decl']
             file_funcs += funcs['get_func'] + funcs['send_func']
-
-    # Based on the IDL, create specific functions
-    proxy_funcs = ""
-    proxy_decls = ""
-    stub_funcs = ""
-    stub_decls = ""
-    for func in decls["functions"].items():
-        # proxy functions and declarations
-        func_struct = generateProxyFunc(func, filename[:-4], is_array)
-        proxy_decls += func_struct['decl']
-        proxy_funcs += func_struct['func']
-        
-        # stub functions and declarations 
-        stub_struct = generateStubFunc(func, filename[:-4], is_array)
-        stub_decls += stub_struct['decl']
-        stub_funcs += stub_struct['func']
-    
-    # Add dispatch function to the stub
-    dispatch_func_struct = generateDispatchFunc(decls["functions"].items())
-    stub_decls += dispatch_func_struct['decl']
-    stub_funcs += dispatch_func_struct['func']
-
-    bad_func = getBadFunction(filename)
-
-    COMMON_SUPPORT_DECLS_PROXY = getFileHeader(filename[:-4], "proxy")
-    COMMON_SUPPORT_DECLS_STUB = getFileHeader(filename[:-4], "stub")
-    
-    # Build complete stub and proxy 
-    file_stub = COMMON_SUPPORT_DECLS_STUB + file_decls + stub_decls + bad_func + stub_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCSTUBSOCKET")
-    file_proxy = COMMON_SUPPORT_DECLS_PROXY + file_decls + proxy_decls + proxy_funcs + file_funcs + getCommonSupportFunctions(filename[:-4], "RPCPROXYSOCKET")
-                
-    writeString(idlName + ".stub.cpp", file_stub)
-    writeString(idlName + ".proxy.cpp", file_proxy)
-    # except Exception as e:
-    #     print(str(e), file=sys.stderr)
-    #     print(f"Usage: {sys.argv[0]} <idlfilename>", file=sys.stderr)
+    return (file_decls, file_funcs)
 
 def writeString(filename, file_contents):
     with open(filename, "w", encoding="utf-8") as file:
@@ -117,7 +122,8 @@ def generateDispatchFunc(funcs):
     string functionName;
     get_string_from_stream(&functionName);
     
-    if (!RPCSTUBSOCKET->eof()) {{\n
+    if (!RPCSTUBSOCKET->eof()) {{
+        *GRADING << functionName << "() invoked by client" << endl;
 """
     # for each function in the IDL, loop through and create the correct dispatch 
     for i, func in enumerate(funcs):
@@ -164,18 +170,29 @@ def generateStubFunc(func, filename, is_array):
     for i, arg in enumerate(func[1]['arguments']):
         name_tuple = cleanTypeName(arg['type'], is_array)
         body += SPACE + f"{name_tuple[0]} {arg['name'] + name_tuple[1]};\n"
-        body += SPACE + f"get_{getSanitizedTypeName(arg['type'])}_from_stream({arg['name']});\n"
+        if is_array[arg['type']]:
+            body += SPACE + f"get_{getSanitizedTypeName(arg['type'])}_from_stream({arg['name']});\n"
+        else:
+            body += SPACE + f"get_{getSanitizedTypeName(arg['type'])}_from_stream(&{arg['name']});\n"
         body += SPACE + f"c150debug->printf(C150RPCDEBUG, \"{filename}.stub.cpp: invoking {func_name}\");\n"
         arg_string += arg['name'] + f", "
         # if it is the last argument, remove the trailing ", "
         if i == len(func[1]['arguments']) - 1:
             arg_string = arg_string[:-2]
 
-    # send the result to the stream
-    body += SPACE + f"{return_type} result = {func_name}({arg_string});\n\n"
+    # send the result to the stream, if void function return "COMPLETE"
+    if return_type != "void":
+        body += SPACE + f"{return_type} result = {func_name}({arg_string});\n\n"
+    else: 
+        body += SPACE + f"{func_name}({arg_string});\n\n"
+        
     body += SPACE + f"/* send back result */\n"
     body += SPACE + f"c150debug->printf(C150RPCDEBUG, \"{filename}.stub.cpp: returned from {func_name} -- responding to client\");\n\n"
-    body += SPACE + f"send_{getSanitizedTypeName(return_type)}_to_stream(result);\n}}\n"
+
+    if return_type != "void":
+        body += SPACE + f"send_{getSanitizedTypeName(return_type)}_to_stream(result);\n}}\n"
+    else:
+        body += SPACE + f"send_string_to_stream(\"COMPLETE\");\n}}\n"
     
     return {
         'func': body,
@@ -224,15 +241,25 @@ def generateProxyFunc(func, filename, is_array):
     # add debug
     body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() invocation sent, waiting for response\");\n"
 
-    # get the return value from the stream
-    body += SPACE + f"{func[1]['return_type']} return_value;\n"
-    body += SPACE + f"get_{getSanitizedTypeName(return_type)}_from_stream(&return_value);\n"
+
+    if return_type != "void":
+        # get the return value from the stream
+        body += SPACE + f"{func[1]['return_type']} return_value;\n"
+        body += SPACE + f"get_{getSanitizedTypeName(return_type)}_from_stream(&return_value);\n"
+        
+        # return statement and closing parenthesis 
+        body += SPACE + f"return return_value;\n"
+    else:
+        # get the return value from the stream
+        body += """    string status;\n
+    get_string_from_stream(&status);
+    if (status != "COMPLETE") {
+        throw C150Exception("Invalid status string for void function");
+    }\n"""
+
 
     # add debug 
     body += SPACE + f"c150debug->printf(C150RPCDEBUG,\"{filename}.proxy.cpp: {func_name}() successful return from remote call\");\n"
-    
-    # return statement and closing parenthesis 
-    body += SPACE + f"return return_value;\n"
     body += f"}}\n"
 
     # put the body together, like frankenstein!
@@ -390,6 +417,7 @@ def getFileHeader(filename, file_type):
 #include <cstring>
 #include "c150debug.h"
 #include <cassert>
+#include "c150grading.h"
 
 using namespace std;
 using namespace C150NETWORK;

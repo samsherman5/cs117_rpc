@@ -19,12 +19,12 @@ void send_int_to_stream(int i);
 void send_float_to_stream(float f);
 
 #define INITIAL_BUFF_SIZE 50
-void get_int_15_from_stream(int *arr_p);
-void send_int_15_to_stream(int *to_send);
-void get_int_24_from_stream(int *arr_p);
-void send_int_24_to_stream(int *to_send);
-void get_int_24_15_from_stream(int **arr_p);
-void send_int_24_15_to_stream(int **to_send);
+void get_int_15_from_stream(int arr_p[15]);
+void send_int_15_to_stream(int to_send[15]);
+void get_int_24_from_stream(int arr_p[24]);
+void send_int_24_to_stream(int to_send[24]);
+void get_int_24_15_from_stream(int arr_p[24][15]);
+void send_int_24_15_to_stream(int to_send[24][15]);
 int sqrt(int x[24], int y[24][15], int z[24][15]);
 int sqrt(int x[24], int y[24][15], int z[24][15])
 {
@@ -46,37 +46,37 @@ int sqrt(int x[24], int y[24][15], int z[24][15])
     c150debug->printf(C150RPCDEBUG,"testarray2.proxy.cpp: sqrt() successful return from remote call");
     return return_value;
 }
-void get_int_15_from_stream(int *arr_p)
+void get_int_15_from_stream(int arr_p[15])
 {
     for (int i = 0; i < 15; i++) {
         get_int_from_stream(arr_p + i);
     }
 }
-void send_int_15_to_stream(int *to_send)
+void send_int_15_to_stream(int to_send[15])
 {
     for (int i = 0; i < 15; i++) {
         send_int_to_stream(to_send[i]);
     }
 }
-void get_int_24_from_stream(int *arr_p)
+void get_int_24_from_stream(int arr_p[24])
 {
     for (int i = 0; i < 24; i++) {
         get_int_from_stream(arr_p + i);
     }
 }
-void send_int_24_to_stream(int *to_send)
+void send_int_24_to_stream(int to_send[24])
 {
     for (int i = 0; i < 24; i++) {
         send_int_to_stream(to_send[i]);
     }
 }
-void get_int_24_15_from_stream(int **arr_p)
+void get_int_24_15_from_stream(int arr_p[24][15])
 {
     for (int i = 0; i < 24; i++) {
         get_int_15_from_stream(arr_p[i]);
     }
 }
-void send_int_24_15_to_stream(int **to_send)
+void send_int_24_15_to_stream(int to_send[24][15])
 {
     for (int i = 0; i < 24; i++) {
         send_int_15_to_stream(to_send[i]);
